@@ -14,8 +14,10 @@ import org.springframework.context.annotation.PropertySource;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
+import com.itucity.common.ResourceTypeEnum;
 import com.itucity.yjreport.dao.ReportDao;
 import com.itucity.yjreport.dao.entity.ReportEO;
+import com.itucity.yjreport.dao.entity.ResourceEO;
 import com.itucity.yjreport.service.ReportService;
 import com.itucity.yjreport.service.ResourceService;
 import com.itucity.yjreport.vo.FileVO;
@@ -43,11 +45,21 @@ public class ReportServiceTest {
 	}
 	
 	@Test
-	public void getProductSalesTest(){
-		List<ProductSalesVO> p = resourceService.getProductSales("GP1");
+	public void getProductSalesStatisticsTest(){
+		List<ProductSalesVO> p = resourceService.getProductSalesStatistics("GP1", null);
 		System.out.print(p.toString());
 		return ;
 	}
+	
+	@Test
+	public void saveTest(){
+		ResourceEO resource = new ResourceEO();
+		resource.setName("test");
+		resource.setType(ResourceTypeEnum.GP);
+		reportDao.save(resource);
+		System.out.print(resource);
+	}
+	
 	
 //	@Test
 //	public void getSalesBySalesNameTest(){
