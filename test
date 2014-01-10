@@ -1,0 +1,572 @@
+package com.itucity.yjreport.service.impl;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.annotation.Resource;
+
+import org.springframework.stereotype.Service;
+
+import com.itucity.common.ExcelTypeEnum;
+import com.itucity.common.ResourceTypeEnum;
+import com.itucity.common.context.UserContext;
+import com.itucity.common.context.UserInfo;
+import com.itucity.yjreport.dao.ReportDao;
+import com.itucity.yjreport.dao.ResourceDao;
+import com.itucity.yjreport.dao.SaleInDao;
+import com.itucity.yjreport.dao.TargetDao;
+import com.itucity.yjreport.dao.UserDao;
+import com.itucity.yjreport.dao.entity.ResourceEO;
+import com.itucity.yjreport.dao.entity.RoleResourceEO;
+import com.itucity.yjreport.dao.entity.UserEO;
+import com.itucity.yjreport.service.ResourceService;
+import com.itucity.yjreport.vo.ProductSalesVO;
+import com.itucity.yjreport.vo.ReportCondition;
+import com.itucity.yjreport.vo.ResourcePrivVO;
+import com.itucity.yjreport.vo.ResourceVO;
+import com.itucity.yjreport.vo.SummaryVO;
+import com.itucity.yjreport.vo.SummaryVO.ColorTypeEnum;
+import com.itucity.yjreport.vo.SummaryVO.SummaryTypeEnum;
+
+@Service("resourceService")
+public class ResourceServiceImpl implements ResourceService {
+
+	@Resource
+	ResourceDao resourceDao;
+	
+	@Resource
+	UserDao userDao;
+	
+	@Resource
+	ReportDao reportDao;
+	
+	@Resource
+	TargetDao targetDao;
+	
+	@Resource
+	SaleInDao saleInDao;
+	
+	
+	@Override
+	public ResourcePrivVO getResourceByRoleID(Integer roleId) {
+		ResourcePrivVO resource = new ResourcePrivVO();
+		
+		List<RoleResourceEO> roleResource
+								= resourceDao.findRoleByRoleID(roleId);
+		
+		//获取用户负责的GP
+		for(RoleResourceEO c : roleResource){
+			ResourceEO r = resourceDao.findByID(
+										c.getResourceId(), ResourceTypeEnum.GP);
+			
+			if(r != null){
+				ResourceVO gpVO = new ResourceVO();
+				gpVO.setId(r.getId());
+				gpVO.setName(r.getName());
+				gpVO.setRegistrationNumber(r.getRegistrationNumber());
+				gpVO.setParentGpId(r.getParentGpId());
+				gpVO.setParentSalesId(r.getParentSalesId());
+				gpVO.setDescription(r.getDescription());
+				resource.getGP().add(gpVO);
+			}
+			
+		}
+		
+		//获取用户负责的BP
+		List<ResourceEO> bp = new ArrayList<ResourceEO>();
+		for(RoleResourceEO c : roleResource){
+			List<ResourceEO> salesBP, gpBP;
+			//获取sales负责的BP
+			salesBP = resourceDao.findBpBySalesID(
+										c.getResourceId(), ResourceTypeEnum.BP);
+			//获取GP负责的BP
+			gpBP = resourceDao.findBpByGpID(
+										c.getResourceId(), ResourceTypeEnum.BP);
+			bp.addAll(salesBP);
+			bp.addAll(gpBP);		
+		}
+		//去除重复的BP
+		List<ResourceEO> temp = new ArrayList<ResourceEO>();
+		for(ResourceEO r : bp){
+			if(!temp.contains(r)){
+				temp.add(r);
+			}
+		}
+		//转换为ResourceVO
+		for(ResourceEO r : temp){
+			ResourceVO gpVO = new ResourceVO();
+			gpVO.setId(r.getId());
+			gpVO.setName(r.getName());
+			gpVO.setRegistrationNumber(r.getRegistrationNumber());
+			gpVO.setParentGpId(r.getParentGpId());
+			gpVO.setParentSalesId(r.getParentSalesId());
+			gpVO.setDescription(r.getDescription());
+			resource.getBP().add(gpVO);
+		}
+		
+		//获取用户负责的sales
+		for(RoleResourceEO s : roleResource){
+			ResourceEO r  = resourceDao.findByID(
+									s.getResourceId(), ResourceTypeEnum.SALES);
+			
+			if(r != null){
+				ResourceVO vo = new ResourceVO();
+				vo.setId(r.getId());
+				vo.setName(r.getName());
+				vo.setRegistrationNumber(r.getRegistrationNumber());
+				vo.setParentGpId(r.getParentGpId());
+				vo.setParentSalesId(r.getParentSalesId());
+				vo.setDescription(r.getDescription());
+				resource.getSales().add(vo);
+			}
+		}
+		
+		return resource;
+	}
+
+	@Override
+	public List<ResourceVO> getResourceList(ResourceTypeEnum type){
+		Integer userId = UserContext.getUser().getId();
+		
+		UserEO user = userDao.find(UserEO.class, userId);
+		ResourcePrivVO resourcePrivVO = getResourceByRoleID(user.getRoleid());
+		List<ResourceVO> resources = new ArrayList<ResourceVO>();
+		switch(type){
+			case GP:
+				//获取用户能够查看的GP
+				resources = resourcePrivVO.getGP();
+				break;
+			case BP:
+				//获取用户能够查看的BP
+				resources = resourcePrivVO.getBP();
+				break;
+			case SALES:
+				//获取用户能够查看的Sales
+				resources = resourcePrivVO.getSales();
+				break;
+			default:
+				
+		}	
+		return resources;
+	}
+	
+	@Override
+	public List<SummaryVO> getSummary2(SummaryTypeEnum type,
+			ReportCondition condition) {
+		List<SummaryVO> summaries = new ArrayList<SummaryVO>();
+		ReportCondition con;
+		if(condition != null){
+			con = condition;
+		}else{
+			con = new ReportCondition();
+		}
+		//获取用户信息
+		UserInfo user = UserContext.getUser();
+		
+		List<String> list = new ArrayList<String>();
+		
+		switch(user.getType()){
+			case Admin:
+			case Director:				
+				if(type == SummaryTypeEnum.GP){//看所有GP的summary
+					//list = userDao.findRealNameByType(ResourceTypeEnum.GP);
+					list = reportDao.findDistinct("vadPpName", null);
+					summaries = getSummaryByName(list, type, con);
+				}else{//看所有sales的summary
+					//list = userDao.findRealNameByType(ResourceTypeEnum.SALES);
+					list = reportDao.findDistinct("salesName", null);
+					summaries = getSummaryByName(list, type, con);
+				}
+				break;
+			case RegionManager:
+				if(type == SummaryTypeEnum.GP){//看自己区域内GP的summary
+					con.setRegion(user.getAuthority());
+					list = reportDao.findDistinct("vadPpName", con);
+					summaries = getSummaryByName(list, type, con);
+				}else{//看自己区域内sales的summary
+					con.setRegion(user.getAuthority());
+					list = reportDao.findDistinct("salesName", con);
+					summaries = getSummaryByName(list, type, con);
+				}
+				break;
+			case GP:
+				if(type == SummaryTypeEnum.GP){//看自己的summary数据
+					list.add(user.getAuthority());
+					summaries = getSummaryByName(list, type, con);
+				}else{//无sales数据
+				}
+				break;
+			case Sales:
+				if(type == SummaryTypeEnum.SALES){//看自己的summary数据
+					list.add(user.getAuthority());
+					summaries = getSummaryByName(list, type, con);
+				}else{//无GP数据
+				}
+				break;
+			case BP:
+				//BP不能查看sales或GP的summary
+				break;
+			default:
+		}
+		
+		return summaries;
+	}
+	
+	private List<SummaryVO> getSummaryByName(List<String> names, SummaryTypeEnum type,
+			ReportCondition condition){
+		List<SummaryVO> summaries = new ArrayList<SummaryVO>();
+		
+		//产品列表
+		List<String> products = reportDao.findDistinct("product", null);
+		
+		for(String name : names){//对每一个GP或者Sales
+			SummaryVO summary = new SummaryVO();
+						
+			summary.setType(type);
+			summary.setName(name);
+			
+			BigDecimal target; 
+			BigDecimal saleIn;
+			
+			//统计BP
+			ReportCondition con = new ReportCondition();
+			if(condition != null){ 
+				con = condition.clone();
+			}
+			switch(type){
+				case GP:
+					Integer bpNumber = 
+						(int)reportDao.countBp("vadPpName", name, con);
+					summary.setNumberOfBPs(bpNumber);
+					
+					
+					target = targetDao.countScore(ExcelTypeEnum.GP_Name_Target,
+							name, con);
+					summary.setTarget(target);
+					
+					saleIn = saleInDao.countSaleIn(
+									ExcelTypeEnum.GP_Name_Target, name, con);
+					summary.setSellIn(saleIn);
+					break;
+				case SALES:
+					Integer number =
+						(int)reportDao.countBp("salesName", name, con);
+					summary.setNumberOfBPs(number);
+					
+					target = targetDao.countScore(ExcelTypeEnum.Sales_Target,
+							name, con);
+					summary.setTarget(target);
+					
+					saleIn = saleInDao.countSaleIn(
+							ExcelTypeEnum.Sales_Target, name, con);
+					summary.setSellIn(saleIn);
+					break;
+				default:
+			}
+							
+			int qtdRevenue = 0;
+			List<Map<String, BigDecimal>> productReSales
+					= new ArrayList<Map<String, BigDecimal>>();
+			
+			for(String product : products){//统计每个产品的销售额
+				ReportCondition tempCondition = new ReportCondition();
+				if(condition != null){ 
+					tempCondition = condition.clone();
+				}
+
+				Map<String, BigDecimal> map = new HashMap<String, BigDecimal>();
+				//用户能够查看的销售记录
+				switch(type){
+					case GP:
+						tempCondition.setVadPpName(name);
+						break;
+					case SALES:
+						tempCondition.setSalesName(name);
+						break;
+					default:	
+				}
+								
+				//每一种产品
+				tempCondition.setProduct(product);
+				
+				//统计Region Manager能够查看的数据中 产品product的销售额
+				BigDecimal tempSales = reportDao
+								.countSalesByCondition(tempCondition);
+				map.put(product, tempSales);
+				productReSales.add(map);
+				
+				qtdRevenue += tempSales.intValue();
+			}
+					
+			summary.setProductReSales(productReSales);
+			summary.setQtdRevenue(new BigDecimal(qtdRevenue));
+			
+			double achieve;
+			if(summary.getTarget().equals(new BigDecimal(0.0000))){
+				achieve = 1;
+			}else{
+				achieve = qtdRevenue/summary.getTarget().doubleValue();
+				
+			}	
+			summary.setAchieve(achieve);
+			summary.setColor(achieveToColor(achieve));
+			
+			summaries.add(summary);
+		
+		}
+		
+		return summaries;
+	}
+	
+	@Override
+	public List<SummaryVO> getSummary(SummaryTypeEnum type,
+								ReportCondition condition) {
+		List<SummaryVO> summaries = new ArrayList<SummaryVO>();
+		
+		ResourcePrivVO priv = getResourceByRoleID(
+									UserContext.getUser().getRoleid());
+	
+		List<ResourceVO> list = new ArrayList<ResourceVO>();
+		
+		switch(type){
+		case GP:
+			list = priv.getGP();
+			break;
+		case SALES:
+			list = priv.getSales();
+			break;
+		}
+		
+		for(ResourceVO r : list){//对每一个GP或者Sales
+			SummaryVO summary = new SummaryVO();
+						
+			summary.setType(type);
+			summary.setName(r.getName());
+			
+			
+			
+			//产品列表
+			List<String> products = reportDao.findAllDistinct("product", null);
+			
+			int qtdRevenue = 0;
+			List<Map<String, BigDecimal>> productReSales
+					= new ArrayList<Map<String, BigDecimal>>();
+			
+			for(String product : products){
+				ReportCondition tempCondition = new ReportCondition();
+				if(condition != null){ 
+					tempCondition = condition.clone();
+				}
+
+				Map<String, BigDecimal> map = new HashMap<String, BigDecimal>();
+				//用户能够查看的销售记录
+				switch(type){
+				case GP:
+					tempCondition.setVadPpName(r.getName());
+					
+					Integer bpNumber = resourceDao.findBpByGpID(
+										r.getId(), ResourceTypeEnum.BP).size();
+					summary.setNumberOfBPs(bpNumber);
+					break;
+				case SALES:
+					tempCondition.setSalesName(r.getName());
+					
+					Integer number = resourceDao.findBpByGpID(
+									r.getId(), ResourceTypeEnum.BP).size();
+					summary.setNumberOfBPs(number);
+					break;
+				}
+								
+				//每一种产品
+				tempCondition.setProduct(product);
+				
+				//统计Region Manager能够查看的数据中 产品product的销售额
+				BigDecimal tempSales = reportDao
+								.countSalesByCondition(tempCondition);
+				map.put(product, tempSales);
+				productReSales.add(map);
+				
+				qtdRevenue += tempSales.intValue();
+			}
+					
+			summary.setProductReSales(productReSales);
+			summary.setQtdRevenue(new BigDecimal(qtdRevenue));
+			
+			ReportCondition con = new ReportCondition();			
+			if(condition != null){ 
+				con = condition.clone();
+			}
+//??????				
+			BigDecimal target = targetDao.countScore(ExcelTypeEnum.Product_Target,
+							null, con);
+			
+			
+			summary.setTarget(new BigDecimal(100));
+			summary.setSellIn(new BigDecimal(100));
+			
+			double achieve = qtdRevenue/summary.getTarget().doubleValue();
+			summary.setAchieve(achieve);
+			
+			summary.setColor(achieveToColor(achieve));
+			
+			summaries.add(summary);
+		}
+		
+		return summaries;
+	
+	}
+	
+	@Override
+	public List<String> getGPProducts(String gpName, ReportCondition condition) {
+		ReportCondition con;
+		
+		if(condition != null){
+			con = condition.clone();
+		}else{
+			con = new ReportCondition();
+		}
+		
+		if(gpName == null){//gpName为null,表示查所有能看的产品
+			return reportDao.findDistinct("product", con);
+		}
+		con.setVadPpName(gpName);
+		
+		//GP销售的产品
+		return reportDao.findDistinct("product", con);
+	}
+	
+	@Override
+	public List<ProductSalesVO> getProductSalesStatistics(String gpName,
+					ReportCondition con){
+		List<ProductSalesVO> productSalesList = new ArrayList<ProductSalesVO>();
+		
+		ReportCondition condition = new ReportCondition();
+		condition.setVadPpName(gpName);		
+		//GP销售的产品
+		List<String> products = reportDao.findDistinct("product", condition);
+		
+		for(String product : products){
+			ProductSalesVO productSales = new ProductSalesVO();
+			productSales.setName(product);
+			
+			if(con != null){
+				condition = con.clone();
+			}else{
+				condition = new ReportCondition();
+			}
+			
+			condition.setVadPpName(gpName);
+			condition.setProduct(product);
+			//获取GP（gpName）销售的产品product的销售额
+			BigDecimal sales = reportDao.countSalesByCondition(condition);
+			productSales.setSales(sales);
+			
+			if(con != null){
+				condition = con.clone();
+			}else{
+				condition = new ReportCondition();
+			}
+			condition.setProduct(product);
+			//获取所有人产品product的销售额
+			BigDecimal allSales = reportDao.countSalesByCondition(condition);
+			productSales.setAllSales(allSales);
+			
+			productSalesList.add(productSales);
+		}
+		
+		return productSalesList;
+	}
+
+	
+	@Override
+	public ProductSalesVO getProductSales(String gpName, String product,
+			ReportCondition condition) {
+		ProductSalesVO productSales = new ProductSalesVO();
+		ReportCondition con;
+		if(gpName == null){
+			return null;
+		}
+		if(product == null){//表明查所有产品的销售情况
+			productSales.setName("All Products");
+		}else{
+			productSales.setName(product);
+		}
+		if(condition != null){
+			con = condition.clone();
+		}else{
+			con = new ReportCondition();
+		}	
+		//ResourceEO gp = resourceDao.findByID(gpId);
+		con.setVadPpName(gpName);
+		con.setProduct(product);
+		
+		//获取GP（gpName）产品product的销售额
+		BigDecimal sales = reportDao.countSalesByCondition(con);
+		productSales.setSales(sales);
+		
+		//获取产品的target数据
+		BigDecimal target = targetDao.countScore(
+									ExcelTypeEnum.Product_Target, product, con);
+		productSales.setAllSales(target);
+		
+		return productSales;
+	}
+	
+	@Override
+	public List<String> getGPRanking(String product, ReportCondition condition)
+	{
+		List<String> gpRanking = new ArrayList<String>();
+		//所有的GP
+		List<String> gpList = reportDao.findDistinct("vadPpName", null);
+		
+		List<ProductSalesVO>  productSales = new ArrayList<ProductSalesVO>();
+		for(String gp : gpList){
+			ProductSalesVO p = getProductSales(gp, product, condition);
+			if(p != null){
+				p.setName(gp);
+				productSales.add(p);
+			}
+		}
+		//排序
+		Collections.sort(productSales, new Comparator<ProductSalesVO>(){
+			@Override
+			public int compare(ProductSalesVO o1, ProductSalesVO o2) {
+				ProductSalesVO p1=(ProductSalesVO)o1;
+				ProductSalesVO p2=(ProductSalesVO)o2;
+				int flag = p1.getSales().compareTo(p2.getSales());
+				if(flag == 0){
+					flag = p1.getAllSales().compareTo(p2.getAllSales());
+					if(flag == 0){
+						return p1.getName().compareTo(p2.getName());
+					}
+					else{
+						return flag;
+					}
+				}else{
+					return flag;
+				}
+			}
+		});
+		
+		for(int i = productSales.size() - 1; i >= 0; i--){
+			gpRanking.add(productSales.get(i).getName());
+		}
+		return gpRanking;
+	}
+	
+	private ColorTypeEnum achieveToColor(double achieve){
+		if(achieve >= 1.0){
+			return ColorTypeEnum.GREEN;
+		}
+		if( 0.8 <= achieve && achieve < 1.0){
+			return ColorTypeEnum.YELLOW;
+		}
+		return ColorTypeEnum.RED;
+	}
+
+}
